@@ -1,4 +1,6 @@
 const axios =  require('axios');
+const {Scheduler} = require('./Scheduler')
+
 
 const APIS = {
     base: "https://blockstream.info/api",
@@ -13,13 +15,68 @@ async function get(url) {
     return response.data;
 }
 
-async function main() {
+async function getTxDetail(id) {
+    const data = await get(APIS.transactionDetail(id));
+    
+    if(!vin[id])    vin[id] = [];
+    data.vin.forEach(vinObj => {
+        vin[id].push(vinObj.txid)
+    });
+    return data;
+}
+
+const vin = {};
+const aMap = {};
+
+
+/**
+ * 
+ * A -> B, C
+ * B -> E, F
+ */
+
+function buildAncestor(id) {
+    let ancs = vin[id];
+    if(!aMap[id])   aMap[id] = new Set();
+
+    if(ancs?.length) {
+        ancs.forEach(ancId => {
+            if(vin[ancId])  aMap[id].add(ancId);
+
+            buildAncestor(ancId);
+
+            const ancsIds = aMap[ancId];
+            ancsIds.forEach(key => {
+                if(vin[key])    aMap[id].add(key)
+            });
+        })
+    }
+}
+
+async function getTop10Ids() {
     const hash = await get(APIS.blockHeight(680000));
     const ids = await get(APIS.allBlockTxs(hash));
 
-    const tx = await get(APIS.transactionDetail(ids[2]));
+    const runner = new Scheduler(20);
 
-    console.log(tx)
+    runner.addTasks(ids.map(id => () => getTxDetail(id)), (res) => {
+        ids.forEach(id => {
+            buildAncestor(id);
+        })
+        
+        const sortableIds = [];
+
+        for(let id in aMap) {
+            sortableIds.push({id, size: aMap[id].size});
+        }
+
+        sortableIds.sort((a,b) => (b.size - a.size));
+
+        const top10 = sortableIds.splice(0, 10);
+
+        console.log(top10);
+        return top10;
+    });
 }
 
-main();
+getTop10Ids();
